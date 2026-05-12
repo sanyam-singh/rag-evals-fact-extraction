@@ -126,9 +126,15 @@ Experiments are run across two evaluation sets (E1: human golden, E2: new test d
 
 ```
 rag-evals-fact-extraction/
-├── NewSFT_EVALS.ipynb       # Main evaluation notebook
-├── README.md
-└── requirements.txt
+├── evaluator.py     # EnhancedFactEvaluatorProduction — semantic matching, contradiction detection, CSV export
+├── pipeline.py      # Threaded / multiprocess / batched pipeline runners
+├── inference.py     # Model inference with retry logic and parallel execution
+├── metrics.py       # Precision, Recall, F1, F2, F3 computation
+├── prompts.py       # Fact extraction system prompt + judge prompts
+├── utils.py         # load_jsonl, ProgressTracker
+├── main.py          # CLI entry point (infer / eval / metrics)
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -153,49 +159,49 @@ Your data should be a JSONL file where each line has a `messages` array with `us
 
 Use any LLM (via OpenAI, Anthropic, or Google APIs) to generate `predicted_facts` for each question in your dataset.
 
-### 4. Run Evaluation
+### 4. Run Inference
+
+```bash
+python main.py infer \
+  --data test.jsonl \
+  --model ft:gpt-4.1-mini-2025-04-14:your-org:model-name:id \
+  --output predictions.csv \
+  --workers 10
+```
+
+### 5. Run Evaluation
+
+```bash
+python main.py eval \
+  --data predictions.csv \
+  --output detailed_results.csv \
+  --workers 40
+```
+
+Or directly in Python:
 
 ```python
 from evaluator import EnhancedFactEvaluatorProduction
 
 evaluator = EnhancedFactEvaluatorProduction(openai_api_key="sk-...")
-
 metrics = evaluator.evaluate_fact_sft_model_enhanced(
-    predicted_facts=model_output,   # JSON string or list of fact dicts
-    golden_facts=ground_truth,      # JSON string or list of fact dicts
+    predicted_facts=model_output,
+    golden_facts=ground_truth,
     question="What fertilizer for wheat?",
-    debug=False
 )
 ```
 
-### 5. Compute Aggregate Metrics
+### 6. Compute Metrics
+
+```bash
+python main.py metrics --data detailed_results.csv
+```
+
+Or in Python:
 
 ```python
-import pandas as pd
-import numpy as np
-
-# Load detailed results CSV
-df = pd.read_csv("detailed_results.csv")
-sample_level = df.groupby('sample_id').first().reset_index()
-
-sample_level['total_predicted_facts'] = (
-    sample_level['total_matches'] +
-    sample_level['total_relevant_unmatched'] +
-    sample_level['total_irrelevant_unmatched']
-)
-
-# Core metrics
-sample_level['recall']    = sample_level['total_matches'] / sample_level['total_gold_facts']
-sample_level['precision'] = sample_level['total_matches'] / sample_level['total_predicted_facts']
-
-# F-score family
-for beta in [1, 2, 3]:
-    sample_level[f'f{beta}'] = (
-        (1 + beta**2) * sample_level['precision'] * sample_level['recall'] /
-        (beta**2 * sample_level['precision'] + sample_level['recall'])
-    )
-
-print(sample_level[['recall', 'precision', 'f1', 'f2', 'f3']].mean())
+from metrics import compute_metrics_from_file
+compute_metrics_from_file("detailed_results.csv")
 ```
 
 ---
